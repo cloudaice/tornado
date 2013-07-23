@@ -59,6 +59,9 @@ except ImportError:
 from tornado.platform.auto import set_close_exec, Waker
 
 
+_POLL_TIMEOUT = 3600.0
+
+
 class TimeoutError(Exception):
     pass
 
@@ -356,7 +359,7 @@ class IOLoop(Configurable):
                 if isinstance(result, Future):
                     future_cell[0] = result
                 else:
-                    future_cell[0] = Future()
+                    future_cell[0] = TracebackFuture()
                     future_cell[0].set_result(result)
             self.add_future(future_cell[0], lambda future: self.stop())
         self.add_callback(run)
@@ -596,7 +599,7 @@ class PollIOLoop(IOLoop):
                 pass
 
         while True:
-            poll_timeout = 3600.0
+            poll_timeout = _POLL_TIMEOUT
 
             # Prevent IO event starvation by delaying new callbacks
             # to the next iteration of the event loop.
@@ -605,6 +608,9 @@ class PollIOLoop(IOLoop):
                 self._callbacks = []
             for callback in callbacks:
                 self._run_callback(callback)
+            # Closures may be holding on to a lot of memory, so allow
+            # them to be freed before we go into our poll wait.
+            callbacks = callback = None
 
             if self._timeouts:
                 now = self.time()
@@ -616,6 +622,7 @@ class PollIOLoop(IOLoop):
                     elif self._timeouts[0].deadline <= now:
                         timeout = heapq.heappop(self._timeouts)
                         self._run_callback(timeout.callback)
+                        del timeout
                     else:
                         seconds = self._timeouts[0].deadline - now
                         poll_timeout = min(seconds, poll_timeout)

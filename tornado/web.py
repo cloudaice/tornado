@@ -1142,7 +1142,7 @@ class RequestHandler(object):
             elif isinstance(result, Future):
                 if result.done():
                     if result.result() is not None:
-                        raise ValueError('Expected None, got %r' % result)
+                        raise ValueError('Expected None, got %r' % result.result())
                     callback()
                 else:
                     # Delayed import of IOLoop because it's not available
@@ -1827,6 +1827,10 @@ class StaticFileHandler(RequestHandler):
                 return
             if start is not None and start < 0:
                 start += size
+            if end is not None and end > size:
+                # Clients sometimes blindly use a large range to limit their
+                # download size; cap the endpoint at the actual file size.
+                end = size
             # Note: only return HTTP 206 if less than the entire range has been
             # requested. Not only is this semantically correct, but Chrome
             # refuses to play audio if it gets an HTTP 206 in response to
@@ -2305,8 +2309,11 @@ class UIModule(object):
         self.handler = handler
         self.request = handler.request
         self.ui = handler.ui
-        self.current_user = handler.current_user
         self.locale = handler.locale
+
+    @property
+    def current_user(self):
+        return self.handler.current_user
 
     def render(self, *args, **kwargs):
         """Overridden in subclasses to return this module's output."""
