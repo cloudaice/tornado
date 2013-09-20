@@ -250,7 +250,7 @@ class RequestHandler(object):
                 not self.request.connection.no_keep_alive):
             conn_header = self.request.headers.get("Connection")
             if conn_header and (conn_header.lower() == "keep-alive"):
-                self.set_header("Connection", "Keep-Alive")
+                self._headers["Connection"] = "Keep-Alive"
         self._write_buffer = []
         self._status_code = 200
         self._reason = httputil.responses[200]
@@ -437,15 +437,25 @@ class RequestHandler(object):
             morsel[k] = v
 
     def clear_cookie(self, name, path="/", domain=None):
-        """Deletes the cookie with the given name."""
+        """Deletes the cookie with the given name.
+
+        Due to limitations of the cookie protocol, you must pass the same
+        path and domain to clear a cookie as were used when that cookie
+        was set (but there is no way to find out on the server side
+        which values were used for a given cookie).
+        """
         expires = datetime.datetime.utcnow() - datetime.timedelta(days=365)
         self.set_cookie(name, value="", path=path, expires=expires,
                         domain=domain)
 
-    def clear_all_cookies(self):
-        """Deletes all the cookies the user sent with this request."""
+    def clear_all_cookies(self, path="/", domain=None):
+        """Deletes all the cookies the user sent with this request.
+
+        See `clear_cookie` for more information on the path and domain
+        parameters.
+        """
         for name in self.request.cookies:
-            self.clear_cookie(name)
+            self.clear_cookie(name, path=path, domain=domain)
 
     def set_secure_cookie(self, name, value, expires_days=30, **kwargs):
         """Signs and timestamps a cookie so it cannot be forged.
@@ -751,10 +761,10 @@ class RequestHandler(object):
 
         if hasattr(self.request, "connection"):
             # Now that the request is finished, clear the callback we
-            # set on the IOStream (which would otherwise prevent the
+            # set on the HTTPConnection (which would otherwise prevent the
             # garbage collection of the RequestHandler when there
             # are keepalive connections)
-            self.request.connection.stream.set_close_callback(None)
+            self.request.connection.set_close_callback(None)
 
         if not self.application._wsgi:
             self.flush(include_footers=True)
@@ -1587,7 +1597,14 @@ class Application(object):
                             args = [unquote(s) for s in match.groups()]
                     break
             if not handler:
-                handler = ErrorHandler(self, request, status_code=404)
+                if self.settings.get('default_handler_class'):
+                    handler_class = self.settings['default_handler_class']
+                    handler_args = self.settings.get(
+                        'default_handler_args', {})
+                else:
+                    handler_class = ErrorHandler
+                    handler_args = dict(status_code=404)
+                handler = handler_class(self, request, **handler_args)
 
         # In debug mode, re-compile templates and reload static files on every
         # request so you don't need to restart to see changes

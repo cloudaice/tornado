@@ -265,13 +265,13 @@ class BaseIOStream(object):
         self._maybe_run_close_callback()
 
     def _maybe_run_close_callback(self):
-        if (self.closed() and self._close_callback and
-                self._pending_callbacks == 0):
-            # if there are pending callbacks, don't run the close callback
-            # until they're done (see _maybe_add_error_handler)
-            cb = self._close_callback
-            self._close_callback = None
-            self._run_callback(cb)
+        # If there are pending callbacks, don't run the close callback
+        # until they're done (see _maybe_add_error_handler)
+        if self.closed() and self._pending_callbacks == 0:
+            if self._close_callback is not None:
+                cb = self._close_callback
+                self._close_callback = None
+                self._run_callback(cb)
             # Delete any unfinished callbacks to break up reference cycles.
             self._read_callback = self._write_callback = None
             # Clear the buffers so they can be cleared immediately even
@@ -801,6 +801,17 @@ class SSLIOStream(IOStream):
         self._handshake_writing = False
         self._ssl_connect_callback = None
         self._server_hostname = None
+
+        # If the socket is already connected, attempt to start the handshake.
+        try:
+            self.socket.getpeername()
+        except socket.error:
+            pass
+        else:
+            # Indirectly start the handshake, which will run on the next
+            # IOLoop iteration and then the real IO state will be set in
+            # _handle_events.
+            self._add_io_state(self.io_loop.WRITE)
 
     def reading(self):
         return self._handshake_reading or super(SSLIOStream, self).reading()

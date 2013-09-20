@@ -33,7 +33,7 @@ import tornado.web
 
 from tornado.concurrent import TracebackFuture
 from tornado.escape import utf8, native_str
-from tornado import httpclient
+from tornado import httpclient, httputil
 from tornado.ioloop import IOLoop
 from tornado.iostream import StreamClosedError
 from tornado.log import gen_log, app_log
@@ -48,6 +48,10 @@ except NameError:
 
 
 class WebSocketError(Exception):
+    pass
+
+
+class WebSocketClosedError(WebSocketError):
     pass
 
 
@@ -160,6 +164,8 @@ class WebSocketHandler(tornado.web.RequestHandler):
         message will be sent as utf8; in binary mode any byte string
         is allowed.
         """
+        if self.ws_connection is None:
+            raise WebSocketClosedError()
         if isinstance(message, dict):
             message = tornado.escape.json_encode(message)
         self.ws_connection.write_message(message, binary=binary)
@@ -195,6 +201,8 @@ class WebSocketHandler(tornado.web.RequestHandler):
 
     def ping(self, data):
         """Send ping frame to the remote end."""
+        if self.ws_connection is None:
+            raise WebSocketClosedError()
         self.ws_connection.write_ping(data)
 
     def on_pong(self, data):
@@ -210,8 +218,9 @@ class WebSocketHandler(tornado.web.RequestHandler):
 
         Once the close handshake is successful the socket will be closed.
         """
-        self.ws_connection.close()
-        self.ws_connection = None
+        if self.ws_connection:
+            self.ws_connection.close()
+            self.ws_connection = None
 
     def allow_draft76(self):
         """Override to enable support for the older "draft76" protocol.
@@ -853,7 +862,14 @@ def websocket_connect(url, io_loop=None, callback=None, connect_timeout=None):
     """
     if io_loop is None:
         io_loop = IOLoop.current()
-    request = httpclient.HTTPRequest(url, connect_timeout=connect_timeout)
+    if isinstance(url, httpclient.HTTPRequest):
+        assert connect_timeout is None
+        request = url
+        # Copy and convert the headers dict/object (see comments in
+        # AsyncHTTPClient.fetch)
+        request.headers = httputil.HTTPHeaders(request.headers)
+    else:
+        request = httpclient.HTTPRequest(url, connect_timeout=connect_timeout)
     request = httpclient._RequestProxy(
         request, httpclient.HTTPRequest._DEFAULTS)
     conn = WebSocketClientConnection(io_loop, request)

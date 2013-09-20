@@ -682,11 +682,9 @@ class PollIOLoop(IOLoop):
                         # Happens when the client closes the connection
                         pass
                     else:
-                        app_log.error("Exception in I/O handler for fd %s",
-                                      fd, exc_info=True)
+                        self.handle_callback_exception(self._handlers.get(fd))
                 except Exception:
-                    app_log.error("Exception in I/O handler for fd %s",
-                                  fd, exc_info=True)
+                    self.handle_callback_exception(self._handlers.get(fd))
         # reset the stopped flag so another start/stop pair can be issued
         self._stopped = False
         if self._blocking_signal_threshold is not None:
@@ -724,14 +722,14 @@ class PollIOLoop(IOLoop):
             list_empty = not self._callbacks
             self._callbacks.append(functools.partial(
                 stack_context.wrap(callback), *args, **kwargs))
-        if list_empty and thread.get_ident() != self._thread_ident:
-            # If we're in the IOLoop's thread, we know it's not currently
-            # polling.  If we're not, and we added the first callback to an
-            # empty list, we may need to wake it up (it may wake up on its
-            # own, but an occasional extra wake is harmless).  Waking
-            # up a polling IOLoop is relatively expensive, so we try to
-            # avoid it when we can.
-            self._waker.wake()
+            if list_empty and thread.get_ident() != self._thread_ident:
+                # If we're in the IOLoop's thread, we know it's not currently
+                # polling.  If we're not, and we added the first callback to an
+                # empty list, we may need to wake it up (it may wake up on its
+                # own, but an occasional extra wake is harmless).  Waking
+                # up a polling IOLoop is relatively expensive, so we try to
+                # avoid it when we can.
+                self._waker.wake()
 
     def add_callback_from_signal(self, callback, *args, **kwargs):
         with stack_context.NullContext():
@@ -820,7 +818,7 @@ class PeriodicCallback(object):
         try:
             self.callback()
         except Exception:
-            app_log.error("Error in periodic callback", exc_info=True)
+            self.io_loop.handle_callback_exception(self.callback)
         self._schedule_next()
 
     def _schedule_next(self):
